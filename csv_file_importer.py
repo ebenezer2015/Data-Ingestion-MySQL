@@ -5,8 +5,6 @@ import configparser
 import mysql.connector
 from mysql.connector import Error
 
-import configparser
-
 class DatabaseConfig:
     def __init__(self, filename='db_config.ini', section='mysql'):
         # Initialize the DatabaseConfig class with a filename and section
@@ -55,17 +53,17 @@ class CSVToMySQLImporter:
         self.csv_directory = csv_directory
         self.connection = None
 
-    def create_connection(self):
+    def create_connection(self, database=None):
         try:
             config = self.db_config.get_config()
-            if self.db_config.get_database():
-                config['database'] = self.db_config.get_database()
+            # Use the provided database if specified, otherwise use the one from the config
+            config['database'] = database if database else self.db_config.get_database()
             
             self.connection = mysql.connector.connect(**config)
             print(f"Connected to MySQL Server version {self.connection.get_server_info()}")
             
-            if self.db_config.get_database():
-                print(f"Connected to database: {self.db_config.get_database()}")
+            if config['database']:
+                print(f"Connected to database: {config['database']}")
             else:
                 print("No specific database selected")
             
@@ -89,52 +87,55 @@ class CSVToMySQLImporter:
         if not self.connection or not self.connection.is_connected():
             self.create_connection()
         
-        # ... (rest of the import logic)
+        if not self.connection:
+            return
+
+        try:
+            cursor = self.connection.cursor()
+            with open(file_path, mode='r') as file:
+                csv_reader = csv.reader(file)
+                headers = next(csv_reader)
+                query = f"INSERT INTO {table_name} ({', '.join(headers)}) VALUES ({', '.join(['%s'] * len(headers))})"
+                for row in csv_reader:
+                    cursor.execute(query, row)
+            self.connection.commit()
+            print(f"Data from {file_path} imported into {table_name} successfully.")
+        except Error as e:
+            print(f"Error importing data from {file_path} to MySQL: {e}")
+        finally:
+            cursor.close()
 
     def import_all_csvs(self):
         self.create_connection()
         if not self.connection:
             return
 
-        # ... (rest of the import all logic)
+        try:
+            for file_name in os.listdir(self.csv_directory):
+                if file_name.endswith('.csv'):
+                    file_path = os.path.join(self.csv_directory, file_name)
+                    table_name = os.path.splitext(file_name)[0]
+                    self.import_csv_to_mysql(file_path, table_name)
+        except Exception as e:
+            print(f"Error processing CSV files: {e}")
+        finally:
+            self.close_connection()
 
-        self.close_connection()
-
-# Example usage
-if __name__ == "__main__":
-    import argparse
-
+def main():
     parser = argparse.ArgumentParser(description='Import CSV files to MySQL database.')
     parser.add_argument('--config', default='db_config.ini', help='Path to database configuration file')
     parser.add_argument('--csv_directory', required=True, help='Directory containing CSV files')
+    parser.add_argument('--database', help='Database name to use')
 
     args = parser.parse_args()
 
     importer = CSVToMySQLImporter(args.config, args.csv_directory)
 
-    # Example of changing database
-    importer.change_database('new_database_name')
+    # Change to a new database if provided
+    if args.database:
+        importer.change_database(args.database)
 
     importer.import_all_csvs()
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+if __name__ == "__main__":
+    main()
